@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "yellow-fog-c22d",
+	"name": "clipboard",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-12-02",
 	"observability": {
