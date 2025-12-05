@@ -1,24 +1,30 @@
+// Environment interface for Cloudflare Workers KV namespace binding
 interface Env {
 	CLIPS: KVNamespace;
 }
 
 export default {
+	// Main request handler for the Cloudflare Worker
 	async fetch(request: Request, env: Env) {
 		const url = new URL(request.url);
 
+		// POST / => Create a new clipboard entry and return its ID
 		if (request.method === 'POST' && url.pathname === '/') {
 			try {
 				const body = (await request.json()) as { content?: string; readOnce?: boolean; ttl?: number; lang?: string };
 				const content = body.content ?? '';
 				const readOnce = !!body.readOnce;
-				const ttl = Number(body.ttl) || 600;
-				const lang = body.lang === 'zh' ? 'zh' : 'en';
+				const ttl = Number(body.ttl) || 600; // Default TTL: 600 seconds (10 minutes)
+				const lang = body.lang === 'zh' ? 'zh' : 'en'; // Language: Chinese or English
 
+				// Generate a unique ID for the clipboard entry
 				const id = crypto.randomUUID();
 
+				// Store creation timestamp and metadata
 				const createdAt = Date.now();
 				const toStore = JSON.stringify({ content, readOnce, lang, createdAt, ttl });
 
+				// Save to KV store with expiration TTL
 				await env.CLIPS.put(id, toStore, { expirationTtl: ttl });
 
 				return new Response(JSON.stringify({ id }), {
@@ -29,12 +35,14 @@ export default {
 			}
 		}
 
+		// GET / => Return the HTML page for creating clipboard entries
 		if (request.method === 'GET' && url.pathname === '/') {
 			return new Response(getHTMLPage(), {
 				headers: { 'Content-Type': 'text/html; charset=utf-8' },
 			});
 		}
 
+		// GET /{id} => Retrieve and display a clipboard entry
 		if (request.method === 'GET') {
 			const id = url.pathname.replace(/^\/+/, '');
 			if (!id) return new Response('Missing ID', { status: 400 });
@@ -44,12 +52,14 @@ export default {
 
 			const parsed = JSON.parse(data);
 
+			// Delete the entry if it's marked as read-once (burn after reading)
 			if (parsed.readOnce) {
 				await env.CLIPS.delete(id);
 			}
 
+			// Extract metadata for display
 			const lang = parsed.lang === 'zh' ? 'zh' : 'en';
-
+			// Use current time as fallback for old entries without createdAt
 			const createdAt = parsed.createdAt ? Number(parsed.createdAt) : Date.now();
 			const ttl = parsed.ttl ? Number(parsed.ttl) : 600;
 			const readOnce = !!parsed.readOnce;
@@ -59,6 +69,7 @@ export default {
 			});
 		}
 
+		// OPTIONS => Handle CORS preflight requests
 		if (request.method === 'OPTIONS') {
 			return new Response(null, {
 				headers: {
@@ -73,6 +84,7 @@ export default {
 	},
 };
 
+// Generate the HTML page for creating clipboard entries with markdown preview
 function getHTMLPage() {
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -339,7 +351,7 @@ function getHTMLPage() {
 		let currentLang = 'en';
 		let clipboardUrl = '';
 
-
+		// Update all UI text based on selected language (English/Chinese)
 		function updateLanguage() {
 			currentLang = langSelect.value;
 			document.querySelectorAll('[data-en]').forEach(el => {
@@ -355,6 +367,7 @@ function getHTMLPage() {
 				}
 			});
 
+			// Update copy button text in code blocks
 			preview.querySelectorAll('.code-copy-button').forEach(btn => {
 				if (!btn.classList.contains('copied')) {
 					btn.textContent = currentLang === 'zh' ? '复制' : 'Copy';
@@ -364,12 +377,13 @@ function getHTMLPage() {
 
 		langSelect.addEventListener('change', updateLanguage);
 
-
+		// Add copy buttons to all code blocks in the preview
 		function addCopyButtonsToCodeBlocks(container) {
 			const codeBlocks = container.querySelectorAll('pre code');
 			codeBlocks.forEach(codeEl => {
 				const preEl = codeEl.parentElement;
 
+				// Skip if button already exists
 				if (preEl.querySelector('.code-copy-button')) return;
 				
 				const copyButton = document.createElement('button');
@@ -377,6 +391,7 @@ function getHTMLPage() {
 				copyButton.textContent = currentLang === 'zh' ? '复制' : 'Copy';
 				copyButton.setAttribute('aria-label', currentLang === 'zh' ? '复制代码' : 'Copy code');
 				
+				// Copy code content to clipboard on click
 				copyButton.addEventListener('click', async () => {
 					try {
 						const codeText = codeEl.textContent || codeEl.innerText;
@@ -398,7 +413,7 @@ function getHTMLPage() {
 			});
 		}
 
-
+		// Update markdown preview as user types
 		function updatePreview() {
 			const content = contentTextarea.value;
 			if (content.trim()) {
@@ -411,7 +426,7 @@ function getHTMLPage() {
 
 		contentTextarea.addEventListener('input', updatePreview);
 
-
+		// Copy clipboard URL to clipboard
 		copyButton.addEventListener('click', async () => {
 			try {
 				await navigator.clipboard.writeText(clipboardUrl);
@@ -427,7 +442,7 @@ function getHTMLPage() {
 			}
 		});
 
-
+		// Handle form submission to create new clipboard entry
 		form.addEventListener('submit', async (e) => {
 			e.preventDefault();
 			
@@ -452,7 +467,7 @@ function getHTMLPage() {
 					clipboardUrl = window.location.origin + '/' + data.id;
 					result.classList.add('show');
 					
-
+					// Scroll to result section
 					result.scrollIntoView({ behavior: 'smooth' });
 				} else {
 					alert(currentLang === 'zh' ? '创建剪贴板失败' : 'Failed to create clipboard');
@@ -462,13 +477,14 @@ function getHTMLPage() {
 			}
 		});
 
-
+		// Initialize preview on page load
 		updatePreview();
 	</script>
 </body>
 </html>`;
 }
 
+// Generate the HTML page for viewing a clipboard entry with markdown rendering
 function getViewPage(content: string, id: string, lang: string, createdAt: number, ttl: number, readOnce: boolean) {
 	const isZh = lang === 'zh';
 	const title = isZh ? '剪贴板内容' : 'Online Clipboard Content';
@@ -704,6 +720,7 @@ function getViewPage(content: string, id: string, lang: string, createdAt: numbe
 		contentDiv.innerHTML = marked.parse(content);
 		
 
+		// Add copy buttons to all code blocks
 		const codeBlocks = contentDiv.querySelectorAll('pre code');
 		codeBlocks.forEach(codeEl => {
 			const preEl = codeEl.parentElement;
@@ -712,6 +729,7 @@ function getViewPage(content: string, id: string, lang: string, createdAt: numbe
 			copyButton.textContent = isZh ? '复制' : 'Copy';
 			copyButton.setAttribute('aria-label', isZh ? '复制代码' : 'Copy code');
 			
+			// Copy code content to clipboard on click
 			copyButton.addEventListener('click', async () => {
 				try {
 					const codeText = codeEl.textContent || codeEl.innerText;
@@ -732,7 +750,7 @@ function getViewPage(content: string, id: string, lang: string, createdAt: numbe
 			preEl.appendChild(copyButton);
 		});
 		
-
+		// Display creation time and countdown
 		const createdAt = ${Number(createdAt)};
 		const ttl = ${Number(ttl) || 600};
 		const readOnce = ${readOnce};
@@ -740,11 +758,11 @@ function getViewPage(content: string, id: string, lang: string, createdAt: numbe
 		const readOnceEl = document.getElementById('readOnce');
 		const countdownEl = document.getElementById('countdown');
 		
-
+		// Display readOnce status (Yes/No with color coding)
 		readOnceEl.textContent = readOnce ? '${yesLabel}' : '${noLabel}';
 		readOnceEl.classList.add(readOnce ? 'yes' : 'no');
 		
-
+		// Format and display creation timestamp
 		if (createdAt && createdAt > 0) {
 			const createdDate = new Date(createdAt);
 			if (!isNaN(createdDate.getTime())) {
@@ -756,7 +774,7 @@ function getViewPage(content: string, id: string, lang: string, createdAt: numbe
 			createdTimeEl.textContent = '${isZh ? '未知' : 'Unknown'}';
 		}
 		
-
+		// Update countdown timer showing remaining time until expiration
 		function updateCountdown() {
 			const now = Date.now();
 			const elapsed = Math.floor((now - createdAt) / 1000);
@@ -785,7 +803,7 @@ function getViewPage(content: string, id: string, lang: string, createdAt: numbe
 			countdownEl.classList.remove('expired');
 		}
 		
-
+		// Initialize countdown and update every second
 		updateCountdown();
 		setInterval(updateCountdown, 1000);
 	</script>
